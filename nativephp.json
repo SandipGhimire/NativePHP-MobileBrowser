@@ -48,6 +48,20 @@
         "permissions": [
             "android.permission.INTERNET"
         ],
+        "queries": [
+            {
+                "intent": {
+                    "action": "android.intent.action.VIEW",
+                    "data": {"scheme": "https"}
+                }
+            },
+            {
+                "intent": {
+                    "action": "android.intent.action.VIEW",
+                    "data": {"scheme": "http"}
+                }
+            }
+        ],
         "repositories": [],
         "dependencies": {
             "implementation": [

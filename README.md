@@ -6,7 +6,7 @@ This package is a **free, self-contained plugin**. It ships its own Laravel faca
 
 ## Features
 
-- Two modes per call: `webview` (full-screen in-app browser with toolbar, back/forward/reload, and a share button) or `external` (hands the URL to the device's default browser app and leaves yours).
+- Two modes per call: `webview` (full-screen in-app browser with a compact, modern header — smart back button, page title, and an overflow menu with Open in Chrome/Safari, Refresh, Copy Link, and Share — that follows the device's light/dark theme automatically) or `external` (hands the URL to the device's default browser app and leaves yours).
 - **OAuth sign-in** via a dedicated `auth()` builder — presents the authorize URL in a secure, isolated system browser context (`ASWebAuthenticationSession` on iOS, Chrome Custom Tabs on Android) and captures the redirect for you, with no embedded-WebView login screen (which most providers, including Google, reject).
 - Fluent, chainable builders in both PHP and JavaScript.
 - Programmatically close an open in-app browser session or cancel an in-progress sign-in.
@@ -45,6 +45,21 @@ Same two-phase pattern as every async call in this plugin family — a synchrono
 
 ---
 
+## In-app browser UI
+
+The `webview` mode overlay uses a compact, modern header — the same shape as Instagram's or Chrome Custom Tabs' in-app browser, not a full custom chrome — and it's the same on both platforms:
+
+- **Back button** — always smart: walks back through the page's own navigation history if there is any, otherwise closes the overlay. This matches the OS hardware-back/swipe-back gesture, which behaves the same way regardless of any setting below.
+- **Two-line title** — the page's own `<title>` on top, updating live as the user navigates, with your `->title()` override underneath as a smaller subtitle (hidden if you never set one).
+- **Overflow menu (⋮)** — Open in Chrome (Android) / Open in Safari (iOS), Refresh, Copy Link, and Share — Share only appears if `shareButton(true)` (the default).
+- **System theme aware** — header colors, text, icon tint, status bar contrast (Android), and the webview background all switch with the OS light/dark setting automatically. Nothing to configure.
+
+`showToolbar(false)` hides this header entirely, leaving a bare webview (e.g. a kiosk-style page). `showNavigationButtons(false)` changes what a *tap on the header's back button* does — it stops walking page history and just closes the overlay instead; it has no effect on the hardware/gesture back, which always tries page history first either way.
+
+There's no separate back/forward/reload bar anymore — reload moved into the overflow menu, and forward navigation was dropped in favor of this simpler, single-header layout.
+
+---
+
 ## PHP Usage
 
 ### The `Browser` facade
@@ -61,9 +76,9 @@ Browser::open('https://example.com')->external()->open();
 // Fully configured in-app browser
 Browser::open('https://example.com')
     ->id('support-page')                // correlate this session with its events
-    ->title('Support')                   // toolbar title override
-    ->showNavigationButtons(true)        // back/forward/reload bar
-    ->shareButton(true)                  // share button in the toolbar
+    ->title('Support')                   // subtitle shown under the page's own title
+    ->showNavigationButtons(true)        // header back button can walk page history
+    ->shareButton(true)                  // "Share…" entry in the overflow menu
     ->desktopMode(false)                 // request the mobile site (default)
     ->open();
 ```
@@ -78,10 +93,10 @@ If you never call `->open()` explicitly, it fires automatically when the builder
 |---|---|
 | `mode(string $mode)` | `'webview'` (default) or `'external'`. Throws `InvalidArgumentException` if unknown. |
 | `external(bool $external = true)` | Shortcut for `mode('external')` / `mode('webview')`. |
-| `title(string $title)` | Toolbar title override for `webview` mode. Defaults to the page's own `<title>` once loaded. |
-| `showToolbar(bool $enabled = true)` | Show/hide the top toolbar (close, title, share) in `webview` mode. |
-| `showNavigationButtons(bool $enabled = true)` | Show/hide the back/forward/reload bar in `webview` mode. |
-| `shareButton(bool $enabled = true)` | Show/hide the share button on the toolbar. |
+| `title(string $title)` | Subtitle shown under the page's own title in the header, `webview` mode. Header shows just the page title if you don't set this. |
+| `showToolbar(bool $enabled = true)` | Show/hide the compact header (back button, title, overflow menu) in `webview` mode. |
+| `showNavigationButtons(bool $enabled = true)` | Whether tapping the header's back button can walk the page's own navigation history before closing the overlay. Hardware/gesture back is unaffected. |
+| `shareButton(bool $enabled = true)` | Show/hide "Share…" in the header's overflow menu. |
 | `desktopMode(bool $enabled = true)` | Request a desktop user agent instead of the mobile one. `webview` mode only. |
 | `id(string $id)` | Custom correlation ID for this session (not auto-generated — `null` unless set). |
 | `getId()` | Get this session's correlation ID, or `null`. |
@@ -362,10 +377,10 @@ export function SupportLink() {
 | `Browser.open(url)` | `(string) => PendingOpen` | Start building an open request. |
 | `.mode(mode)` | `(BrowserMode) => this` | `'webview'` or `'external'`. Throws if unknown. |
 | `.external(external?)` | `(boolean = true) => this` | Shortcut for `mode('external')` / `mode('webview')`. |
-| `.title(title)` | `(string) => this` | Toolbar title override, `webview` mode only. |
-| `.showToolbar(enabled?)` | `(boolean = true) => this` | Show/hide the top toolbar. |
-| `.showNavigationButtons(enabled?)` | `(boolean = true) => this` | Show/hide the back/forward/reload bar. |
-| `.shareButton(enabled?)` | `(boolean = true) => this` | Show/hide the share button. |
+| `.title(title)` | `(string) => this` | Subtitle shown under the page's own title in the header, `webview` mode only. |
+| `.showToolbar(enabled?)` | `(boolean = true) => this` | Show/hide the compact header (back button, title, overflow menu). |
+| `.showNavigationButtons(enabled?)` | `(boolean = true) => this` | Whether the header's back button can walk page history before closing the overlay. Hardware/gesture back is unaffected. |
+| `.shareButton(enabled?)` | `(boolean = true) => this` | Show/hide "Share…" in the header's overflow menu. |
 | `.desktopMode(enabled?)` | `(boolean = true) => this` | Request a desktop user agent. `webview` mode only. |
 | `.id(id)` | `(string) => this` | Custom correlation ID. |
 | `.getId()` | `() => string \| null` | Read the current correlation ID. |

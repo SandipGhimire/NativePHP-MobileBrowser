@@ -65,13 +65,6 @@ enum BrowserFunctions {
                 return BridgeResponse.error(code: "INVALID_URL", message: "Could not parse URL: \(url)")
             }
 
-            guard UIApplication.shared.canOpenURL(parsedUrl) else {
-                return BridgeResponse.error(
-                    code: "NO_BROWSER_AVAILABLE",
-                    message: "No application is available to open this URL."
-                )
-            }
-
             DispatchQueue.main.async {
                 BrowserFunctions.cancelActiveAuthSession(reason: "replaced")
                 UIApplication.shared.open(parsedUrl, options: [:]) { success in
@@ -263,6 +256,8 @@ private final class AuthContextProvider: NSObject, ASWebAuthenticationPresentati
 
 final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
+    private static let headerHeight: CGFloat = 52
+
     private let pageUrl: String
     private let titleOverride: String?
     private let showToolbar: Bool
@@ -273,9 +268,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     private var webView: WKWebView!
     private var titleLabel: UILabel?
+    private var subtitleLabel: UILabel?
     private var progressView: UIProgressView?
     private var backButton: UIButton?
-    private var forwardButton: UIButton?
+    private var overflowButton: UIButton?
     private var finished = false
     private var openedFired = false
     private var progressObservation: NSKeyValueObservation?
@@ -297,11 +293,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .white
+        view.backgroundColor = .systemBackground
 
         setUpWebView()
         if showToolbar { setUpToolbar() }
-        if showNavigationButtons { setUpNavigationBar() }
         layoutWebView()
 
         guard let url = URL(string: pageUrl) else {
@@ -315,7 +310,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         let configuration = WKWebViewConfiguration()
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        webView.allowsBackForwardNavigationGestures = true
         webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.backgroundColor = .systemBackground
 
         if desktopMode {
             webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -334,141 +331,147 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: showToolbar ? view.safeAreaLayoutGuide.topAnchor : view.topAnchor, constant: showToolbar ? 44 : 0),
-            webView.bottomAnchor.constraint(equalTo: showNavigationButtons ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor, constant: showNavigationButtons ? -44 : 0),
+            webView.topAnchor.constraint(equalTo: showToolbar ? view.safeAreaLayoutGuide.topAnchor : view.topAnchor, constant: showToolbar ? Self.headerHeight : 0),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
     private func setUpToolbar() {
         let bar = UIView()
-        bar.backgroundColor = .white
+        bar.backgroundColor = .systemBackground
         bar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bar)
 
-        let closeButton = UIButton(type: .system)
-        closeButton.setImage(UIImage(systemName: "xmark")?.withRenderingMode(.alwaysTemplate), for: .normal)
-        styleIconButton(closeButton)
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        bar.addSubview(closeButton)
+        let separator = UIView()
+        separator.backgroundColor = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(separator)
+
+        let back = UIButton(type: .system)
+        back.setImage(UIImage(systemName: "chevron.left")?.withRenderingMode(.alwaysTemplate), for: .normal)
+        styleIconButton(back)
+        back.addTarget(self, action: #selector(backOrCloseTapped), for: .touchUpInside)
+        bar.addSubview(back)
+        backButton = back
+
+        let titleStack = UIStackView()
+        titleStack.axis = .vertical
+        titleStack.alignment = .center
+        titleStack.spacing = 1
+        titleStack.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(titleStack)
 
         let label = UILabel()
-        label.text = titleOverride ?? pageUrl
-        label.textColor = .black
+        label.text = titleOverride ?? (URL(string: pageUrl)?.host ?? pageUrl)
+        label.textColor = .label
         label.font = .systemFont(ofSize: 15, weight: .semibold)
         label.textAlignment = .center
         label.lineBreakMode = .byTruncatingMiddle
-        label.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(label)
+        titleStack.addArrangedSubview(label)
         titleLabel = label
+
+        let subtitle = UILabel()
+        subtitle.textColor = .secondaryLabel
+        subtitle.font = .systemFont(ofSize: 12, weight: .regular)
+        subtitle.textAlignment = .center
+        subtitle.lineBreakMode = .byTruncatingMiddle
+        if let devTitle = titleOverride, !devTitle.isEmpty {
+            subtitle.text = devTitle
+        } else {
+            subtitle.isHidden = true
+        }
+        titleStack.addArrangedSubview(subtitle)
+        subtitleLabel = subtitle
 
         let progress = UIProgressView(progressViewStyle: .default)
         progress.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(progress)
         progressView = progress
 
-        var shareButton: UIButton?
-        if shareButtonEnabled {
-            let button = UIButton(type: .system)
-            button.setImage(UIImage(systemName: "square.and.arrow.up")?.withRenderingMode(.alwaysTemplate), for: .normal)
-            styleIconButton(button)
-            button.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
-            bar.addSubview(button)
-            shareButton = button
-        }
+        let overflow = UIButton(type: .system)
+        overflow.setImage(UIImage(systemName: "ellipsis")?.withRenderingMode(.alwaysTemplate), for: .normal)
+        styleIconButton(overflow)
+        overflow.menu = makeOverflowMenu()
+        overflow.showsMenuAsPrimaryAction = true
+        bar.addSubview(overflow)
+        overflowButton = overflow
 
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bar.topAnchor.constraint(equalTo: view.topAnchor),
-            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 44),
+            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: Self.headerHeight),
 
-            closeButton.leadingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-            closeButton.bottomAnchor.constraint(equalTo: bar.bottomAnchor, constant: -6),
-            closeButton.widthAnchor.constraint(equalToConstant: 32),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            separator.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
 
-            label.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: closeButton.trailingAnchor, constant: 8),
+            back.leadingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.leadingAnchor, constant: 8),
+            back.centerYAnchor.constraint(equalTo: bar.bottomAnchor, constant: -26),
+            back.widthAnchor.constraint(equalToConstant: 36),
+            back.heightAnchor.constraint(equalToConstant: 36),
+
+            overflow.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            overflow.centerYAnchor.constraint(equalTo: back.centerYAnchor),
+            overflow.widthAnchor.constraint(equalToConstant: 36),
+            overflow.heightAnchor.constraint(equalToConstant: 36),
+
+            titleStack.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
+            titleStack.centerYAnchor.constraint(equalTo: back.centerYAnchor),
+            titleStack.leadingAnchor.constraint(greaterThanOrEqualTo: back.trailingAnchor, constant: 8),
+            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: overflow.leadingAnchor, constant: -8),
 
             progress.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             progress.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             progress.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
         ])
-
-        if let shareButton = shareButton {
-            shareButton.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                shareButton.trailingAnchor.constraint(equalTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-                shareButton.bottomAnchor.constraint(equalTo: bar.bottomAnchor, constant: -6),
-                shareButton.widthAnchor.constraint(equalToConstant: 32),
-                shareButton.heightAnchor.constraint(equalToConstant: 32),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: shareButton.leadingAnchor, constant: -8),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                label.trailingAnchor.constraint(lessThanOrEqualTo: bar.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            ])
-        }
-    }
-
-    private func setUpNavigationBar() {
-        let bar = UIView()
-        bar.backgroundColor = .white
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(bar)
-
-        let back = UIButton(type: .system)
-        back.setImage(UIImage(systemName: "chevron.left")?.withRenderingMode(.alwaysTemplate), for: .normal)
-        styleIconButton(back)
-        back.isEnabled = false
-        back.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
-        bar.addSubview(back)
-        backButton = back
-
-        let reload = UIButton(type: .system)
-        reload.setImage(UIImage(systemName: "arrow.clockwise")?.withRenderingMode(.alwaysTemplate), for: .normal)
-        styleIconButton(reload)
-        reload.addTarget(self, action: #selector(reloadTapped), for: .touchUpInside)
-        bar.addSubview(reload)
-
-        let forward = UIButton(type: .system)
-        forward.setImage(UIImage(systemName: "chevron.right")?.withRenderingMode(.alwaysTemplate), for: .normal)
-        styleIconButton(forward)
-        forward.isEnabled = false
-        forward.addTarget(self, action: #selector(forwardTapped), for: .touchUpInside)
-        bar.addSubview(forward)
-        forwardButton = forward
-
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -44),
-
-            back.centerYAnchor.constraint(equalTo: bar.centerYAnchor, constant: -6),
-            back.centerXAnchor.constraint(equalTo: bar.centerXAnchor, constant: -60),
-            back.widthAnchor.constraint(equalToConstant: 36),
-            back.heightAnchor.constraint(equalToConstant: 36),
-
-            reload.centerYAnchor.constraint(equalTo: bar.centerYAnchor, constant: -6),
-            reload.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
-            reload.widthAnchor.constraint(equalToConstant: 36),
-            reload.heightAnchor.constraint(equalToConstant: 36),
-
-            forward.centerYAnchor.constraint(equalTo: bar.centerYAnchor, constant: -6),
-            forward.centerXAnchor.constraint(equalTo: bar.centerXAnchor, constant: 60),
-            forward.widthAnchor.constraint(equalToConstant: 36),
-            forward.heightAnchor.constraint(equalToConstant: 36),
-        ])
     }
 
     private func styleIconButton(_ button: UIButton) {
-        button.tintColor = .black
+        button.tintColor = .label
         button.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    @objc private func closeTapped() {
-        finish(reason: "user_closed")
+    private func makeOverflowMenu() -> UIMenu {
+        var actions: [UIAction] = [
+            UIAction(title: "Open in Safari", image: UIImage(systemName: "safari")) { [weak self] _ in
+                self?.openInExternalBrowser()
+            },
+            UIAction(title: "Refresh", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
+                self?.webView.reload()
+            },
+            UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                self?.copyLink()
+            },
+        ]
+
+        if shareButtonEnabled {
+            actions.append(
+                UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                    self?.shareTapped()
+                }
+            )
+        }
+
+        return UIMenu(title: "", children: actions)
+    }
+
+    private func openInExternalBrowser() {
+        guard let url = webView.url ?? URL(string: pageUrl) else { return }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    private func copyLink() {
+        UIPasteboard.general.string = webView.url?.absoluteString ?? pageUrl
+    }
+
+    @objc private func backOrCloseTapped() {
+        if showNavigationButtons, webView.canGoBack {
+            webView.goBack()
+        } else {
+            finish(reason: "user_closed")
+        }
     }
 
     @objc private func shareTapped() {
@@ -478,25 +481,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         present(activityController, animated: true)
     }
 
-    @objc private func backTapped() {
-        webView.goBack()
-    }
-
-    @objc private func forwardTapped() {
-        webView.goForward()
-    }
-
-    @objc private func reloadTapped() {
-        webView.reload()
-    }
-
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        backButton?.isEnabled = webView.canGoBack
-        forwardButton?.isEnabled = webView.canGoForward
-
-        if titleOverride == nil {
-            titleLabel?.text = webView.title?.isEmpty == false ? webView.title : pageUrl
-        }
+        titleLabel?.text = webView.title?.isEmpty == false ? webView.title : (URL(string: pageUrl)?.host ?? pageUrl)
 
         if !openedFired {
             openedFired = true
@@ -509,9 +495,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        NSLog("%@", "[BrowserFunctions] WebView load error: \(error.localizedDescription)")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        NSLog("%@", "[BrowserFunctions] WebView load error: \(error.localizedDescription)")
     }
 
     func finish(reason: String) {

@@ -1,6 +1,6 @@
 {
     "name": "sghimire/mobile-browser",
-    "description": "Self-contained native in-app browser (WKWebView / android.webkit.WebView) and external browser launcher for NativePHP Mobile — own facade, fluent open builder, events, and JS bindings, with no dependency on any paid plugin.",
+    "description": "Self-contained native in-app browser (WKWebView / android.webkit.WebView) and external browser launcher for NativePHP Mobile own facade, fluent open builder, events, and JS bindings.",
     "type": "nativephp-plugin",
     "keywords": ["nativephp", "browser", "webview", "in-app-browser", "laravel", "mobile"],
     "license": "MIT",
