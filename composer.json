@@ -1,0 +1,47 @@
+{
+    "name": "sghimire/mobile-browser",
+    "description": "Self-contained native in-app browser (WKWebView / android.webkit.WebView) and external browser launcher for NativePHP Mobile — own facade, fluent open builder, events, and JS bindings, with no dependency on any paid plugin.",
+    "type": "nativephp-plugin",
+    "keywords": ["nativephp", "browser", "webview", "in-app-browser", "laravel", "mobile"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Sandip Ghimire",
+            "email": "sandipghimire2076@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "nativephp/mobile": "^3.0"
+    },
+    "suggest": {
+        "livewire/livewire": "Required only if you use the #[OnNative] attribute to bind browser events directly to component methods."
+    },
+    "autoload": {
+        "psr-4": {
+            "Sandip\\Browser\\Native\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Sandip\\Browser\\Native\\BrowserServiceProvider"
+            ]
+        },
+        "nativephp": {
+            "manifest": "nativephp.json"
+        }
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.0",
+        "laravel/pint": "^1.29"
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

@@ -1,0 +1,77 @@
+{
+    "name": "sghimire/mobile-browser",
+    "version": "1.0.0",
+    "description": "Native in-app browser (WKWebView / android.webkit.WebView) and external browser launcher, free alternative to a paid browser plugin. Ships its own facade, fluent open builder, events, and JS bindings.",
+    "namespace": "Browser",
+    "keywords": ["browser", "webview", "in-app-browser"],
+    "category": "web",
+    "license": "MIT",
+    "pricing": {
+        "type": "free"
+    },
+    "author": {
+        "name": "Sandip Ghimire",
+        "email": "sandipghimire2076@gmail.com",
+        "url": ""
+    },
+    "homepage": "",
+    "repository": "",
+    "funding": [],
+    "platforms": [
+        "android",
+        "ios"
+    ],
+    "icon": "resources/icon.png",
+    "screenshots": [],
+    "bridge_functions": [
+        {
+            "name": "MobileBrowser.Open",
+            "android": "com.sandip.plugins.browser.BrowserFunctions.Open",
+            "ios": "BrowserFunctions.Open",
+            "description": "Open a URL either in a full-screen in-app browser view (mode=webview, default) with its own toolbar, navigation controls and share button, or hand it off to the device's external default browser app (mode=external). Returns immediately once the request is accepted; the real outcome (page opened, or dismissed/failed) arrives later via the Opened and Closed events."
+        },
+        {
+            "name": "MobileBrowser.Close",
+            "android": "com.sandip.plugins.browser.BrowserFunctions.Close",
+            "ios": "BrowserFunctions.Close",
+            "description": "Programmatically dismiss the currently open in-app browser view, as if the user tapped close. Fires Closed with reason 'closed_by_app'. Has no effect on a URL opened in the external browser."
+        }
+    ],
+    "android": {
+        "min_version": 23,
+        "permissions": [
+            "android.permission.INTERNET"
+        ],
+        "repositories": [],
+        "dependencies": {
+            "implementation": []
+        },
+        "activities": [],
+        "services": [],
+        "receivers": [],
+        "providers": []
+    },
+    "ios": {
+        "min_version": "15.0",
+        "permissions": [],
+        "info_plist": {},
+        "repositories": [],
+        "dependencies": {
+            "swift_packages": [],
+            "pods": []
+        }
+    },
+    "assets": {
+        "android": [],
+        "ios": []
+    },
+    "secrets": [],
+    "events": [
+        "Sandip\\Browser\\Native\\Events\\Browser\\Opened",
+        "Sandip\\Browser\\Native\\Events\\Browser\\Closed"
+    ],
+    "service_provider": "Sandip\\Browser\\Native\\BrowserServiceProvider",
+    "hooks": {
+        "copy_assets": "nativephp:mobile-browser:copy-assets"
+    }
+}
