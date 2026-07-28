@@ -1,3 +1,4 @@
+import AuthenticationServices
 import UIKit
 import WebKit
 
@@ -5,10 +6,18 @@ enum BrowserFunctions {
 
     static let openedEvent = "Sandip\\Browser\\Native\\Events\\Browser\\Opened"
     static let closedEvent = "Sandip\\Browser\\Native\\Events\\Browser\\Closed"
+    static let authCompletedEvent = "Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted"
 
     static weak var activeController: BrowserViewController?
 
     static let validModes: Set<String> = ["webview", "external"]
+
+    static let authRedirectScheme = "nativephp"
+
+    static var activeAuthSession: ASWebAuthenticationSession?
+    private static var activeAuthSessionId: String?
+    private static var pendingAuthCancelReason: String?
+    private static let authContextProvider = AuthContextProvider()
 
     class Open: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
@@ -64,6 +73,7 @@ enum BrowserFunctions {
             }
 
             DispatchQueue.main.async {
+                BrowserFunctions.cancelActiveAuthSession(reason: "replaced")
                 UIApplication.shared.open(parsedUrl, options: [:]) { success in
                     if success {
                         LaravelBridge.shared.send?(BrowserFunctions.openedEvent, [
@@ -88,6 +98,14 @@ enum BrowserFunctions {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             let id = parameters["id"] as? String
 
+            if BrowserFunctions.activeAuthSession != nil,
+               id == nil || BrowserFunctions.activeAuthSessionId == id {
+                DispatchQueue.main.async {
+                    BrowserFunctions.cancelActiveAuthSession(reason: "closed_by_app")
+                }
+                return BridgeResponse.success(data: ["closed": true])
+            }
+
             guard let controller = BrowserFunctions.activeController,
                   id == nil || controller.sessionId == id else {
                 return BridgeResponse.success(data: ["closed": false])
@@ -98,6 +116,40 @@ enum BrowserFunctions {
             }
 
             return BridgeResponse.success(data: ["closed": true])
+        }
+    }
+
+    class Auth: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            guard let urlString = parameters["url"] as? String, !urlString.isEmpty,
+                  let url = URL(string: urlString) else {
+                return BridgeResponse.error(code: "INVALID_URL", message: "An authorize URL must be provided.")
+            }
+
+            guard let redirectUriString = parameters["redirectUri"] as? String,
+                  let redirectUri = URL(string: redirectUriString),
+                  let scheme = redirectUri.scheme, !scheme.isEmpty else {
+                return BridgeResponse.error(
+                    code: "INVALID_REDIRECT_URI",
+                    message: "A valid redirectUri with a scheme must be provided."
+                )
+            }
+
+            guard scheme == BrowserFunctions.authRedirectScheme else {
+                return BridgeResponse.error(
+                    code: "UNSUPPORTED_REDIRECT_SCHEME",
+                    message: "redirectUri must use the \"\(BrowserFunctions.authRedirectScheme)://\" scheme so the OAuth callback can be routed back into the app, e.g. \(BrowserFunctions.authRedirectScheme)://127.0.0.1/auth/callback."
+                )
+            }
+
+            let ephemeral = parameters["ephemeral"] as? Bool ?? true
+            let id = parameters["id"] as? String
+
+            DispatchQueue.main.async {
+                BrowserFunctions.presentAuth(url: url, callbackScheme: scheme, ephemeral: ephemeral, id: id)
+            }
+
+            return BridgeResponse.success(data: ["started": true])
         }
     }
 
@@ -116,6 +168,7 @@ enum BrowserFunctions {
         }
 
         activeController?.finish(reason: "replaced")
+        cancelActiveAuthSession(reason: "replaced")
 
         let controller = BrowserViewController(
             url: url,
@@ -129,6 +182,82 @@ enum BrowserFunctions {
         controller.modalPresentationStyle = .fullScreen
         activeController = controller
         presenter.present(controller, animated: true)
+    }
+
+    fileprivate static func cancelActiveAuthSession(reason: String) {
+        guard activeAuthSession != nil else { return }
+        pendingAuthCancelReason = reason
+        activeAuthSession?.cancel()
+    }
+
+    fileprivate static func presentAuth(url: URL, callbackScheme: String, ephemeral: Bool, id: String?) {
+        cancelActiveAuthSession(reason: "replaced")
+
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackUrl, error in
+            let cancelReason = BrowserFunctions.pendingAuthCancelReason
+            BrowserFunctions.activeAuthSession = nil
+            BrowserFunctions.activeAuthSessionId = nil
+            BrowserFunctions.pendingAuthCancelReason = nil
+
+            if let cancelReason = cancelReason {
+                LaravelBridge.shared.send?(closedEvent, ["reason": cancelReason, "id": id])
+                return
+            }
+
+            if let error = error {
+                let reason = (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin ? "user_cancelled" : "auth_failed"
+                LaravelBridge.shared.send?(closedEvent, ["reason": reason, "id": id])
+                return
+            }
+
+            guard let callbackUrl = callbackUrl else {
+                LaravelBridge.shared.send?(closedEvent, ["reason": "auth_failed", "id": id])
+                return
+            }
+
+            LaravelBridge.shared.send?(authCompletedEvent, [
+                "callbackUrl": callbackUrl.absoluteString,
+                "params": parseCallbackParams(callbackUrl),
+                "id": id,
+            ])
+        }
+
+        session.prefersEphemeralWebBrowserSession = ephemeral
+        session.presentationContextProvider = authContextProvider
+
+        activeAuthSession = session
+        activeAuthSessionId = id
+
+        session.start()
+    }
+
+    private static func parseCallbackParams(_ url: URL) -> [String: String] {
+        var result: [String: String] = [:]
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+            return result
+        }
+
+        components.queryItems?.forEach { item in
+            result[item.name] = item.value ?? ""
+        }
+
+        if let fragment = components.fragment, !fragment.isEmpty {
+            URLComponents(string: "?" + fragment)?.queryItems?.forEach { item in
+                result[item.name] = item.value ?? ""
+            }
+        }
+
+        return result
+    }
+}
+
+private final class AuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
     }
 }
 

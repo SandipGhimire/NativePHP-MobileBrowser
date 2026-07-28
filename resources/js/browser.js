@@ -1,6 +1,7 @@
 const baseUrl = "/_native/api/call";
 
 const VALID_MODES = ["webview", "external"];
+const REDIRECT_SCHEME = "nativephp";
 
 async function bridgeCall(method, params = {}) {
   const response = await fetch(baseUrl, {
@@ -110,13 +111,76 @@ class PendingOpen {
   }
 }
 
+class PendingAuth {
+  constructor(url, redirectUri) {
+    if (typeof url !== "string" || url.trim() === "") {
+      throw new Error("An authorize URL must be provided.");
+    }
+
+    let scheme;
+    try {
+      scheme = new URL(redirectUri).protocol.replace(/:$/, "");
+    } catch {
+      scheme = null;
+    }
+
+    if (!scheme) {
+      throw new Error(
+        `A redirectUri with a scheme must be provided, e.g. ${REDIRECT_SCHEME}://127.0.0.1/auth/callback.`,
+      );
+    }
+
+    if (scheme !== REDIRECT_SCHEME) {
+      throw new Error(
+        `redirectUri must use the "${REDIRECT_SCHEME}://" scheme so the OAuth callback can be routed back into the app, e.g. ${REDIRECT_SCHEME}://127.0.0.1/auth/callback.`,
+      );
+    }
+
+    this._url = url;
+    this._redirectUri = redirectUri;
+    this._id = null;
+    this._ephemeral = true;
+    this._started = false;
+  }
+
+  ephemeral(enabled = true) {
+    this._ephemeral = enabled;
+    return this;
+  }
+
+  id(id) {
+    this._id = id;
+    return this;
+  }
+
+  getId() {
+    return this._id;
+  }
+
+  then(resolve, reject) {
+    if (this._started) {
+      return resolve();
+    }
+    this._started = true;
+
+    return bridgeCall("MobileBrowser.Auth", {
+      url: this._url,
+      redirectUri: this._redirectUri,
+      ephemeral: this._ephemeral,
+      id: this._id,
+    }).then(resolve, reject);
+  }
+}
+
 export const Browser = {
   open: (url) => new PendingOpen(url),
+
+  auth: (url, redirectUri) => new PendingAuth(url, redirectUri),
 
   close: (id) => bridgeCall("MobileBrowser.Close", { id: id ?? null }),
 };
 
-export { PendingOpen };
+export { PendingOpen, PendingAuth };
 
 const _eventListeners = {};
 let _listenerInstalled = false;
@@ -154,7 +218,8 @@ export const Events = {
   Browser: {
     Opened: "Sandip\\Browser\\Native\\Events\\Browser\\Opened",
     Closed: "Sandip\\Browser\\Native\\Events\\Browser\\Closed",
+    AuthCompleted: "Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted",
   },
 };
 
-export default { Browser, On, Off, Events, PendingOpen };
+export default { Browser, On, Off, Events, PendingOpen, PendingAuth };

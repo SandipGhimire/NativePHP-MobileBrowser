@@ -23,6 +23,12 @@ export interface BrowserClosedPayload {
   id: string | null;
 }
 
+export interface BrowserAuthCompletedPayload {
+  callbackUrl: string;
+  params: Record<string, string>;
+  id: string | null;
+}
+
 export declare class PendingOpen implements PromiseLike<
   OpenStartedResult | undefined
 > {
@@ -50,8 +56,30 @@ export declare class PendingOpen implements PromiseLike<
   ): PromiseLike<TResult1 | TResult2>;
 }
 
+export declare class PendingAuth implements PromiseLike<
+  OpenStartedResult | undefined
+> {
+  constructor(url: string, redirectUri: string);
+  ephemeral(enabled?: boolean): this;
+  id(id: string): this;
+  getId(): string | null;
+  then<TResult1 = OpenStartedResult | undefined, TResult2 = never>(
+    onfulfilled?:
+      | ((
+          value: OpenStartedResult | undefined,
+        ) => TResult1 | PromiseLike<TResult1>)
+      | undefined
+      | null,
+    onrejected?:
+      | ((reason: BridgeError) => TResult2 | PromiseLike<TResult2>)
+      | undefined
+      | null,
+  ): PromiseLike<TResult1 | TResult2>;
+}
+
 export declare const Browser: {
   open(url: string): PendingOpen;
+  auth(url: string, redirectUri: string): PendingAuth;
   close(id?: string | null): Promise<CloseResult>;
 };
 
@@ -59,6 +87,7 @@ export declare const Events: {
   Browser: {
     Opened: "Sandip\\Browser\\Native\\Events\\Browser\\Opened";
     Closed: "Sandip\\Browser\\Native\\Events\\Browser\\Closed";
+    AuthCompleted: "Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted";
   };
 };
 
@@ -71,6 +100,10 @@ export declare function On(
   callback: (payload: BrowserClosedPayload, eventName: string) => void,
 ): void;
 export declare function On(
+  eventName: typeof Events.Browser.AuthCompleted,
+  callback: (payload: BrowserAuthCompletedPayload, eventName: string) => void,
+): void;
+export declare function On(
   eventName: string,
   callback: (payload: any, eventName: string) => void,
 ): void;
@@ -84,6 +117,10 @@ export declare function Off(
   callback: (payload: BrowserClosedPayload, eventName: string) => void,
 ): void;
 export declare function Off(
+  eventName: typeof Events.Browser.AuthCompleted,
+  callback: (payload: BrowserAuthCompletedPayload, eventName: string) => void,
+): void;
+export declare function Off(
   eventName: string,
   callback: (payload: any, eventName: string) => void,
 ): void;
@@ -94,6 +131,7 @@ declare const _default: {
   Off: typeof Off;
   Events: typeof Events;
   PendingOpen: typeof PendingOpen;
+  PendingAuth: typeof PendingAuth;
 };
 
 export default _default;

@@ -1,8 +1,10 @@
 <?php
 
 use Sandip\Browser\Native\Browser;
+use Sandip\Browser\Native\Events\Browser\AuthCompleted;
 use Sandip\Browser\Native\Events\Browser\Closed;
 use Sandip\Browser\Native\Events\Browser\Opened;
+use Sandip\Browser\Native\PendingAuth;
 use Sandip\Browser\Native\PendingOpen;
 
 beforeEach(function () {
@@ -32,7 +34,7 @@ describe('Plugin Manifest', function () {
 
         $names = array_column($manifest['bridge_functions'], 'name');
 
-        expect($names)->toBe(['MobileBrowser.Open', 'MobileBrowser.Close']);
+        expect($names)->toBe(['MobileBrowser.Open', 'MobileBrowser.Close', 'MobileBrowser.Auth']);
 
         foreach ($manifest['bridge_functions'] as $function) {
             expect($function)->toHaveKeys(['name']);
@@ -52,7 +54,27 @@ describe('Plugin Manifest', function () {
         expect($manifest['events'])->toBe([
             'Sandip\\Browser\\Native\\Events\\Browser\\Opened',
             'Sandip\\Browser\\Native\\Events\\Browser\\Closed',
+            'Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted',
         ]);
+    });
+
+    it('declares a redirect-catching activity with a nativephp:// intent-filter on Android', function () {
+        $manifest = json_decode(file_get_contents($this->manifestPath), true);
+
+        expect($manifest['android']['activities'])->not->toBeEmpty();
+
+        $activity = $manifest['android']['activities'][0];
+        expect($activity['intent_filters'][0]['data']['scheme'])->toBe('nativephp');
+        expect($activity['launchMode'])->toBe('singleTask');
+    });
+
+    it('depends on androidx.browser for Custom Tabs on Android', function () {
+        $manifest = json_decode(file_get_contents($this->manifestPath), true);
+
+        $implementation = $manifest['android']['dependencies']['implementation'];
+        $matches = array_filter($implementation, fn ($dep) => str_starts_with($dep, 'androidx.browser:browser'));
+
+        expect($matches)->not->toBeEmpty();
     });
 });
 
@@ -120,6 +142,30 @@ describe('Native Code', function () {
         expect($kotlinContent)->toContain('NativeActionCoordinator.dispatchEvent');
         expect($swiftContent)->toContain('LaravelBridge.shared.send');
     });
+
+    it('implements OAuth via Custom Tabs on Android and ASWebAuthenticationSession on iOS', function () {
+        $kotlinContent = file_get_contents($this->pluginPath.'/resources/android/BrowserFunctions.kt');
+        $swiftContent = file_get_contents($this->pluginPath.'/resources/ios/BrowserFunctions.swift');
+
+        expect($kotlinContent)->toContain('class Auth(');
+        expect($kotlinContent)->toContain('CustomTabsIntent');
+        expect($kotlinContent)->toContain('class BrowserAuthActivity');
+        expect($kotlinContent)->toContain('"nativephp"');
+
+        expect($swiftContent)->toContain('class Auth:');
+        expect($swiftContent)->toContain('ASWebAuthenticationSession');
+        expect($swiftContent)->toContain('"nativephp"');
+    });
+
+    it('parses both query and fragment callback parameters on both platforms', function () {
+        $kotlinContent = file_get_contents($this->pluginPath.'/resources/android/BrowserFunctions.kt');
+        $swiftContent = file_get_contents($this->pluginPath.'/resources/ios/BrowserFunctions.swift');
+
+        expect($kotlinContent)->toContain('parseCallbackParams');
+        expect($kotlinContent)->toContain('uri.fragment');
+        expect($swiftContent)->toContain('parseCallbackParams');
+        expect($swiftContent)->toContain('components.fragment');
+    });
 });
 
 describe('PHP Classes', function () {
@@ -141,11 +187,13 @@ describe('PHP Classes', function () {
         expect($content)->toContain('class Browser extends Facade');
     });
 
-    it('has main implementation class, builder, events, and attribute', function () {
+    it('has main implementation class, builders, events, and attribute', function () {
         expect(file_exists($this->pluginPath.'/src/Browser.php'))->toBeTrue();
         expect(file_exists($this->pluginPath.'/src/PendingOpen.php'))->toBeTrue();
+        expect(file_exists($this->pluginPath.'/src/PendingAuth.php'))->toBeTrue();
         expect(file_exists($this->pluginPath.'/src/Events/Browser/Opened.php'))->toBeTrue();
         expect(file_exists($this->pluginPath.'/src/Events/Browser/Closed.php'))->toBeTrue();
+        expect(file_exists($this->pluginPath.'/src/Events/Browser/AuthCompleted.php'))->toBeTrue();
         expect(file_exists($this->pluginPath.'/src/Attributes/OnNative.php'))->toBeTrue();
     });
 });
@@ -153,6 +201,11 @@ describe('PHP Classes', function () {
 describe('Browser manager', function () {
     it('returns a fluent PendingOpen from open()', function () {
         expect((new Browser)->open('https://example.com'))->toBeInstanceOf(PendingOpen::class);
+    });
+
+    it('returns a fluent PendingAuth from auth()', function () {
+        expect((new Browser)->auth('https://provider.com/oauth/authorize', 'nativephp://127.0.0.1/auth/callback'))
+            ->toBeInstanceOf(PendingAuth::class);
     });
 
     it('close() returns false outside a native runtime', function () {
@@ -208,6 +261,53 @@ describe('PendingOpen', function () {
     });
 });
 
+describe('PendingAuth', function () {
+    $authorizeUrl = 'https://provider.com/oauth/authorize?client_id=123';
+    $redirectUri = 'nativephp://127.0.0.1/auth/callback';
+
+    it('defaults to an ephemeral session with no id', function () use ($authorizeUrl, $redirectUri) {
+        $pending = new PendingAuth($authorizeUrl, $redirectUri);
+
+        expect($pending->getId())->toBeNull();
+    });
+
+    it('rejects an empty authorize URL', function () use ($redirectUri) {
+        new PendingAuth('', $redirectUri);
+    })->throws(InvalidArgumentException::class);
+
+    it('rejects a redirectUri with no scheme', function () use ($authorizeUrl) {
+        new PendingAuth($authorizeUrl, '127.0.0.1/auth/callback');
+    })->throws(InvalidArgumentException::class);
+
+    it('rejects a redirectUri that does not use the nativephp:// scheme', function () use ($authorizeUrl) {
+        new PendingAuth($authorizeUrl, 'https://127.0.0.1/auth/callback');
+    })->throws(InvalidArgumentException::class);
+
+    it('accepts a nativephp:// redirectUri regardless of host/path', function () use ($authorizeUrl) {
+        expect(new PendingAuth($authorizeUrl, 'nativephp://anything/goes/here'))->toBeInstanceOf(PendingAuth::class);
+    });
+
+    it('chains fluent configuration methods', function () use ($authorizeUrl, $redirectUri) {
+        $pending = (new PendingAuth($authorizeUrl, $redirectUri))
+            ->ephemeral(false)
+            ->id('sign-in');
+
+        expect($pending)->toBeInstanceOf(PendingAuth::class);
+        expect($pending->getId())->toBe('sign-in');
+    });
+
+    it('returns false when started outside a native runtime', function () use ($authorizeUrl, $redirectUri) {
+        expect((new PendingAuth($authorizeUrl, $redirectUri))->auth())->toBeFalse();
+    });
+
+    it('refuses to start twice', function () use ($authorizeUrl, $redirectUri) {
+        $pending = new PendingAuth($authorizeUrl, $redirectUri);
+        $pending->auth();
+
+        expect($pending->auth())->toBeFalse();
+    });
+});
+
 describe('Events', function () {
     it('Opened carries url, mode, and an optional id', function () {
         $event = new Opened(url: 'https://example.com', mode: 'webview', id: 'abc');
@@ -222,6 +322,18 @@ describe('Events', function () {
 
         expect($event->reason)->toBeNull();
         expect($event->id)->toBeNull();
+    });
+
+    it('AuthCompleted carries the callback URL, parsed params, and an optional id', function () {
+        $event = new AuthCompleted(
+            callbackUrl: 'nativephp://127.0.0.1/auth/callback?code=abc123&state=xyz',
+            params: ['code' => 'abc123', 'state' => 'xyz'],
+            id: 'sign-in'
+        );
+
+        expect($event->callbackUrl)->toBe('nativephp://127.0.0.1/auth/callback?code=abc123&state=xyz');
+        expect($event->params)->toBe(['code' => 'abc123', 'state' => 'xyz']);
+        expect($event->id)->toBe('sign-in');
     });
 });
 

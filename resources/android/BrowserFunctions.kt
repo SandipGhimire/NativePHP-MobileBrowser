@@ -1,12 +1,12 @@
 package com.sandip.plugins.browser
 
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.net.Uri
+import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -17,9 +17,11 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.fragment.app.FragmentActivity
 import com.nativephp.mobile.bridge.BridgeFunction
 import com.nativephp.mobile.bridge.BridgeResponse
+import com.nativephp.mobile.ui.MainActivity
 import com.nativephp.mobile.utils.NativeActionCoordinator
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
@@ -29,12 +31,16 @@ object BrowserFunctions {
     private const val TAG = "BrowserFunctions"
     private const val OPENED_EVENT = "Sandip\\Browser\\Native\\Events\\Browser\\Opened"
     private const val CLOSED_EVENT = "Sandip\\Browser\\Native\\Events\\Browser\\Closed"
+    private const val AUTH_COMPLETED_EVENT =
+            "Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted"
+
+    const val AUTH_REDIRECT_SCHEME = "nativephp"
 
     private const val VALID_MODES = "webview, external"
 
     @Volatile private var activeOverlay: BrowserOverlay? = null
 
-    private fun dispatchOpened(activity: FragmentActivity, url: String, mode: String, id: String?) {
+    fun dispatchOpened(activity: FragmentActivity, url: String, mode: String, id: String?) {
         val payload = JSONObject()
         payload.put("url", url)
         payload.put("mode", mode)
@@ -42,11 +48,24 @@ object BrowserFunctions {
         NativeActionCoordinator.dispatchEvent(activity, OPENED_EVENT, payload.toString())
     }
 
-    private fun dispatchClosed(activity: FragmentActivity, reason: String, id: String?) {
+    fun dispatchClosed(activity: FragmentActivity, reason: String, id: String?) {
         val payload = JSONObject()
         payload.put("reason", reason)
         if (id != null) payload.put("id", id)
         NativeActionCoordinator.dispatchEvent(activity, CLOSED_EVENT, payload.toString())
+    }
+
+    fun dispatchAuthCompleted(
+            activity: FragmentActivity,
+            callbackUrl: String,
+            params: Map<String, String>,
+            id: String?
+    ) {
+        val payload = JSONObject()
+        payload.put("callbackUrl", callbackUrl)
+        payload.put("params", JSONObject(params as Map<*, *>))
+        if (id != null) payload.put("id", id)
+        NativeActionCoordinator.dispatchEvent(activity, AUTH_COMPLETED_EVENT, payload.toString())
     }
 
     class Open(private val activity: FragmentActivity) : BridgeFunction {
@@ -78,6 +97,7 @@ object BrowserFunctions {
 
             activity.runOnUiThread {
                 activeOverlay?.finish(reason = "replaced")
+                BrowserAuthActivity.activeInstance?.cancelFromApp("replaced")
                 val overlay =
                         BrowserOverlay(
                                 activity,
@@ -129,6 +149,13 @@ object BrowserFunctions {
     class Close(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             val id = parameters["id"] as? String
+
+            val authSession = BrowserAuthActivity.activeInstance
+            if (authSession != null && (id == null || authSession.sessionId == id)) {
+                activity.runOnUiThread { authSession.cancelFromApp("closed_by_app") }
+                return BridgeResponse.success(mapOf("closed" to true))
+            }
+
             val overlay = activeOverlay
 
             if (overlay == null || (id != null && overlay.id != id)) {
@@ -138,6 +165,47 @@ object BrowserFunctions {
             activity.runOnUiThread { overlay.finish(reason = "closed_by_app") }
 
             return BridgeResponse.success(mapOf("closed" to true))
+        }
+    }
+
+    class Auth(private val activity: FragmentActivity) : BridgeFunction {
+        override fun execute(parameters: Map<String, Any>): Map<String, Any> {
+            val url = parameters["url"] as? String
+            if (url.isNullOrBlank()) {
+                return BridgeResponse.error("INVALID_URL", "An authorize URL must be provided.")
+            }
+
+            val redirectUri = parameters["redirectUri"] as? String
+            val scheme = redirectUri?.let { Uri.parse(it).scheme }
+            if (redirectUri.isNullOrBlank() || scheme.isNullOrBlank()) {
+                return BridgeResponse.error(
+                        "INVALID_REDIRECT_URI",
+                        "A valid redirectUri with a scheme must be provided."
+                )
+            }
+            if (scheme != AUTH_REDIRECT_SCHEME) {
+                return BridgeResponse.error(
+                        "UNSUPPORTED_REDIRECT_SCHEME",
+                        "redirectUri must use the \"$AUTH_REDIRECT_SCHEME://\" scheme so Android can route the OAuth callback back into the app, e.g. $AUTH_REDIRECT_SCHEME://127.0.0.1/auth/callback."
+                )
+            }
+
+            val id = parameters["id"] as? String
+
+            activity.runOnUiThread {
+                activeOverlay?.finish(reason = "replaced")
+                BrowserAuthActivity.activeInstance?.cancelFromApp("replaced")
+
+                val intent =
+                        Intent(activity, BrowserAuthActivity::class.java).apply {
+                            putExtra(BrowserAuthActivity.EXTRA_AUTHORIZE_URL, url)
+                            putExtra(BrowserAuthActivity.EXTRA_REDIRECT_URI, redirectUri)
+                            if (id != null) putExtra(BrowserAuthActivity.EXTRA_ID, id)
+                        }
+                activity.startActivity(intent)
+            }
+
+            return BridgeResponse.success(mapOf("started" to true))
         }
     }
 
@@ -347,7 +415,10 @@ object BrowserFunctions {
                         }
                         webViewClient =
                                 object : WebViewClient() {
-                                    override fun onPageFinished(view: WebView, finishedUrl: String) {
+                                    override fun onPageFinished(
+                                            view: WebView,
+                                            finishedUrl: String
+                                    ) {
                                         super.onPageFinished(view, finishedUrl)
                                         progressBar?.visibility = View.GONE
                                         backButton?.disabled = !view.canGoBack()
@@ -366,16 +437,26 @@ object BrowserFunctions {
                                             description: String?,
                                             failingUrl: String?
                                     ) {
-                                        super.onReceivedError(view, errorCode, description, failingUrl)
+                                        super.onReceivedError(
+                                                view,
+                                                errorCode,
+                                                description,
+                                                failingUrl
+                                        )
                                         Log.w(TAG, "WebView load error $errorCode: $description")
                                     }
                                 }
                         webChromeClient =
                                 object : WebChromeClient() {
-                                    override fun onProgressChanged(view: WebView, newProgress: Int) {
+                                    override fun onProgressChanged(
+                                            view: WebView,
+                                            newProgress: Int
+                                    ) {
                                         super.onProgressChanged(view, newProgress)
                                         progressBar?.apply {
-                                            visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
+                                            visibility =
+                                                    if (newProgress >= 100) View.GONE
+                                                    else View.VISIBLE
                                             progress = newProgress
                                         }
                                     }
@@ -413,13 +494,18 @@ object BrowserFunctions {
                     FrameLayout(activity).apply {
                         setBackgroundColor(Color.WHITE)
                         layoutParams =
-                                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, height)
+                                FrameLayout.LayoutParams(
+                                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                                height
+                                        )
                                         .apply { gravity = Gravity.TOP }
                         elevation = dp(4).toFloat()
                     }
 
             val closeButton =
-                    IconButtonView(activity) { canvas, cx, cy, r -> drawCloseIcon(canvas, cx, cy, r) }
+                    IconButtonView(activity) { canvas, cx, cy, r ->
+                        drawCloseIcon(canvas, cx, cy, r)
+                    }
                             .apply {
                                 layoutParams =
                                         FrameLayout.LayoutParams(
@@ -477,10 +563,10 @@ object BrowserFunctions {
                         max = 100
                         layoutParams =
                                 FrameLayout.LayoutParams(
-                                                FrameLayout.LayoutParams.MATCH_PARENT,
-                                                dp(2),
-                                                Gravity.BOTTOM
-                                        )
+                                        FrameLayout.LayoutParams.MATCH_PARENT,
+                                        dp(2),
+                                        Gravity.BOTTOM
+                                )
                     }
             progressBar = progress
             bar.addView(progress)
@@ -493,13 +579,18 @@ object BrowserFunctions {
                     FrameLayout(activity).apply {
                         setBackgroundColor(Color.WHITE)
                         layoutParams =
-                                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, height)
+                                FrameLayout.LayoutParams(
+                                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                                height
+                                        )
                                         .apply { gravity = Gravity.BOTTOM }
                         elevation = dp(4).toFloat()
                     }
 
             val back =
-                    IconButtonView(activity) { canvas, cx, cy, r -> drawBackIcon(canvas, cx, cy, r) }
+                    IconButtonView(activity) { canvas, cx, cy, r ->
+                        drawBackIcon(canvas, cx, cy, r)
+                    }
                             .apply {
                                 disabled = true
                                 layoutParams =
@@ -511,9 +602,12 @@ object BrowserFunctions {
             bar.addView(back)
 
             val reload =
-                    IconButtonView(activity) { canvas, cx, cy, r -> drawReloadIcon(canvas, cx, cy, r) }
+                    IconButtonView(activity) { canvas, cx, cy, r ->
+                        drawReloadIcon(canvas, cx, cy, r)
+                    }
                             .apply {
-                                layoutParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER)
+                                layoutParams =
+                                        FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER)
                                 setOnClickListener { webView?.reload() }
                             }
             bar.addView(reload)
@@ -566,5 +660,120 @@ object BrowserFunctions {
                 dispatchClosed(activity, reason, id)
             }
         }
+    }
+}
+
+class BrowserAuthActivity : FragmentActivity() {
+
+    companion object {
+        private const val TAG = "BrowserAuthActivity"
+        const val EXTRA_AUTHORIZE_URL = "authorize_url"
+        const val EXTRA_REDIRECT_URI = "redirect_uri"
+        const val EXTRA_ID = "id"
+
+        @Volatile var activeInstance: BrowserAuthActivity? = null
+    }
+
+    private var redirectUri: String = ""
+    var sessionId: String? = null
+        private set
+
+    private var authorizationStarted = false
+    private var redirectReceived = false
+    private var finished = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val authorizeUrl = intent?.getStringExtra(EXTRA_AUTHORIZE_URL)
+        redirectUri = intent?.getStringExtra(EXTRA_REDIRECT_URI) ?: ""
+        sessionId = intent?.getStringExtra(EXTRA_ID)
+
+        if (authorizeUrl.isNullOrBlank() || redirectUri.isBlank()) {
+            finish()
+            return
+        }
+
+        activeInstance = this
+
+        val customTabsIntent = CustomTabsIntent.Builder().build()
+        try {
+            customTabsIntent.launchUrl(this, Uri.parse(authorizeUrl))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch Custom Tabs for authorization", e)
+            completeWithClosed("no_browser_available")
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        val uri = intent.data ?: return
+        val callbackUrl = uri.toString()
+        if (!callbackUrl.startsWith(redirectUri)) return
+
+        redirectReceived = true
+        completeWithSuccess(callbackUrl, parseCallbackParams(uri))
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        if (!authorizationStarted) {
+            authorizationStarted = true
+            return
+        }
+
+        if (!redirectReceived && !finished) {
+            completeWithClosed("user_cancelled")
+        }
+    }
+
+    fun cancelFromApp(reason: String) {
+        completeWithClosed(reason)
+    }
+
+    private fun completeWithSuccess(callbackUrl: String, params: Map<String, String>) {
+        if (!markFinished()) return
+        MainActivity.instance?.let {
+            BrowserFunctions.dispatchAuthCompleted(it, callbackUrl, params, sessionId)
+        }
+        finish()
+    }
+
+    private fun completeWithClosed(reason: String) {
+        if (!markFinished()) return
+        MainActivity.instance?.let { BrowserFunctions.dispatchClosed(it, reason, sessionId) }
+        finish()
+    }
+
+    private fun markFinished(): Boolean {
+        if (finished) return false
+        finished = true
+        if (activeInstance === this) activeInstance = null
+        return true
+    }
+
+    private fun parseCallbackParams(uri: Uri): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+
+        uri.queryParameterNames.forEach { name ->
+            uri.getQueryParameter(name)?.let { result[name] = it }
+        }
+
+        uri.fragment?.let { fragment ->
+            fragment.split("&").forEach { pair ->
+                val parts = pair.split("=", limit = 2)
+                if (parts.size == 2) result[Uri.decode(parts[0])] = Uri.decode(parts[1])
+            }
+        }
+
+        return result
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (activeInstance === this) activeInstance = null
     }
 }

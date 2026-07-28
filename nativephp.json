@@ -34,7 +34,13 @@
             "name": "MobileBrowser.Close",
             "android": "com.sandip.plugins.browser.BrowserFunctions.Close",
             "ios": "BrowserFunctions.Close",
-            "description": "Programmatically dismiss the currently open in-app browser view, as if the user tapped close. Fires Closed with reason 'closed_by_app'. Has no effect on a URL opened in the external browser."
+            "description": "Programmatically dismiss the currently open in-app browser view or in-progress OAuth session, as if the user tapped close/cancel. Fires Closed with reason 'closed_by_app'. Has no effect on a URL opened in the external browser."
+        },
+        {
+            "name": "MobileBrowser.Auth",
+            "android": "com.sandip.plugins.browser.BrowserFunctions.Auth",
+            "ios": "BrowserFunctions.Auth",
+            "description": "Run an OAuth authorization-code flow: present the given authorize URL in a secure, isolated system browser context (ASWebAuthenticationSession on iOS, Custom Tabs + a dedicated redirect activity on Android) and capture the redirect to redirectUri. Returns immediately once the session is presented; the outcome arrives later via AuthCompleted (with the full callback URL and its parsed query/fragment parameters) or Closed (user cancelled, or the flow failed)."
         }
     ],
     "android": {
@@ -44,9 +50,25 @@
         ],
         "repositories": [],
         "dependencies": {
-            "implementation": []
+            "implementation": [
+                "androidx.browser:browser:1.8.0"
+            ]
         },
-        "activities": [],
+        "activities": [
+            {
+                "name": ".BrowserAuthActivity",
+                "exported": true,
+                "launchMode": "singleTask",
+                "theme": "@android:style/Theme.NoDisplay",
+                "intent_filters": [
+                    {
+                        "action": "android.intent.action.VIEW",
+                        "category": ["android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"],
+                        "data": {"scheme": "nativephp"}
+                    }
+                ]
+            }
+        ],
         "services": [],
         "receivers": [],
         "providers": []
@@ -68,7 +90,8 @@
     "secrets": [],
     "events": [
         "Sandip\\Browser\\Native\\Events\\Browser\\Opened",
-        "Sandip\\Browser\\Native\\Events\\Browser\\Closed"
+        "Sandip\\Browser\\Native\\Events\\Browser\\Closed",
+        "Sandip\\Browser\\Native\\Events\\Browser\\AuthCompleted"
     ],
     "service_provider": "Sandip\\Browser\\Native\\BrowserServiceProvider",
     "hooks": {

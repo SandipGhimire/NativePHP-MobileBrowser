@@ -9,6 +9,11 @@ class Browser
         return new PendingOpen($url);
     }
 
+    public function auth(string $authorizeUrl, string $redirectUri): PendingAuth
+    {
+        return new PendingAuth($authorizeUrl, $redirectUri);
+    }
+
     public function close(?string $id = null): bool
     {
         if (! function_exists('nativephp_call')) {
