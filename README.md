@@ -13,6 +13,10 @@ This package is a **free, self-contained plugin**. It ships its own Laravel faca
 - `Opened`, `Closed`, and `AuthCompleted` Laravel events, or bind straight to Livewire with `#[OnNative]`.
 - Works from PHP (Blade/Livewire) and from JavaScript (Vue, React, Inertia, or plain JS).
 
+## Example App
+
+[Authenticator](https://github.com/SandipGhimire/Authenticator) is a full example app built using this plugin
+
 ## Requirements
 
 - PHP ^8.2
@@ -39,7 +43,7 @@ Same two-phase pattern as every async call in this plugin family — a synchrono
 
 1. **Request out.** `Browser::open($url)->open()` (PHP) and `Browser.open(url)` (JS) both reach the same bridge — JS via `fetch('/_native/api/call', { method: 'MobileBrowser.Open', params })`, PHP via `nativephp_call('MobileBrowser.Open', json_encode($params))`. The bridge router matches `"MobileBrowser.Open"` to `BrowserFunctions.Open`.
 2. **Immediate ack.** The call returns right away confirming the request was accepted — not that the page has loaded (webview mode) or that the external browser actually opened.
-3. **Result comes back later, twice.** In `webview` mode, once the page finishes its first load, the native side injects a `native-event` `CustomEvent` on `document` (what the JS `On()`/`Off()` helpers listen for) *and* makes a call back into Laravel that dispatches the real `Opened` event (what `Event::listen()` / `#[OnNative]` pick up). Closing the browser delivers `Closed` the same way. In `external` mode, `Opened` fires as soon as the OS confirms the hand-off succeeded; a failed hand-off (no browser available, bad URL) is returned as a synchronous bridge error instead.
+3. **Result comes back later, twice.** In `webview` mode, once the page finishes its first load, the native side injects a `native-event` `CustomEvent` on `document` (what the JS `On()`/`Off()` helpers listen for) _and_ makes a call back into Laravel that dispatches the real `Opened` event (what `Event::listen()` / `#[OnNative]` pick up). Closing the browser delivers `Closed` the same way. In `external` mode, `Opened` fires as soon as the OS confirms the hand-off succeeded; a failed hand-off (no browser available, bad URL) is returned as a synchronous bridge error instead.
 4. Because results are asynchronous and delivered to PHP and JS independently, always drive your UI from the `Opened` / `Closed` events — never from the return value of `open()`.
 5. `Browser::auth($authorizeUrl, $redirectUri)->auth()` follows the identical two-phase pattern over `MobileBrowser.Auth` / `BrowserFunctions.Auth`: an immediate ack that the sign-in was presented, followed later by `AuthCompleted` (the callback URL arrived) or `Closed` (cancelled or failed).
 
@@ -54,7 +58,7 @@ The `webview` mode overlay uses a compact, modern header — the same shape as I
 - **Overflow menu (⋮)** — Open in Chrome (Android) / Open in Safari (iOS), Refresh, Copy Link, and Share — Share only appears if `shareButton(true)` (the default).
 - **System theme aware** — header colors, text, icon tint, status bar contrast (Android), and the webview background all switch with the OS light/dark setting automatically. Nothing to configure.
 
-`showToolbar(false)` hides this header entirely, leaving a bare webview (e.g. a kiosk-style page). `showNavigationButtons(false)` changes what a *tap on the header's back button* does — it stops walking page history and just closes the overlay instead; it has no effect on the hardware/gesture back, which always tries page history first either way.
+`showToolbar(false)` hides this header entirely, leaving a bare webview (e.g. a kiosk-style page). `showNavigationButtons(false)` changes what a _tap on the header's back button_ does — it stops walking page history and just closes the overlay instead; it has no effect on the hardware/gesture back, which always tries page history first either way.
 
 There's no separate back/forward/reload bar anymore — reload moved into the overflow menu, and forward navigation was dropped in favor of this simpler, single-header layout.
 
@@ -89,18 +93,18 @@ If you never call `->open()` explicitly, it fires automatically when the builder
 
 #### Builder methods
 
-| Method | Description |
-|---|---|
-| `mode(string $mode)` | `'webview'` (default) or `'external'`. Throws `InvalidArgumentException` if unknown. |
-| `external(bool $external = true)` | Shortcut for `mode('external')` / `mode('webview')`. |
-| `title(string $title)` | Subtitle shown under the page's own title in the header, `webview` mode. Header shows just the page title if you don't set this. |
-| `showToolbar(bool $enabled = true)` | Show/hide the compact header (back button, title, overflow menu) in `webview` mode. |
+| Method                                        | Description                                                                                                                                          |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode(string $mode)`                          | `'webview'` (default) or `'external'`. Throws `InvalidArgumentException` if unknown.                                                                 |
+| `external(bool $external = true)`             | Shortcut for `mode('external')` / `mode('webview')`.                                                                                                 |
+| `title(string $title)`                        | Subtitle shown under the page's own title in the header, `webview` mode. Header shows just the page title if you don't set this.                     |
+| `showToolbar(bool $enabled = true)`           | Show/hide the compact header (back button, title, overflow menu) in `webview` mode.                                                                  |
 | `showNavigationButtons(bool $enabled = true)` | Whether tapping the header's back button can walk the page's own navigation history before closing the overlay. Hardware/gesture back is unaffected. |
-| `shareButton(bool $enabled = true)` | Show/hide "Share…" in the header's overflow menu. |
-| `desktopMode(bool $enabled = true)` | Request a desktop user agent instead of the mobile one. `webview` mode only. |
-| `id(string $id)` | Custom correlation ID for this session (not auto-generated — `null` unless set). |
-| `getId()` | Get this session's correlation ID, or `null`. |
-| `open()` | Send the open request to the native bridge. Returns `bool`. |
+| `shareButton(bool $enabled = true)`           | Show/hide "Share…" in the header's overflow menu.                                                                                                    |
+| `desktopMode(bool $enabled = true)`           | Request a desktop user agent instead of the mobile one. `webview` mode only.                                                                         |
+| `id(string $id)`                              | Custom correlation ID for this session (not auto-generated — `null` unless set).                                                                     |
+| `getId()`                                     | Get this session's correlation ID, or `null`.                                                                                                        |
+| `open()`                                      | Send the open request to the native bridge. Returns `bool`.                                                                                          |
 
 #### Supported modes
 
@@ -137,17 +141,17 @@ Browser::auth(
 
 The two arguments are `Browser::auth(string $authorizeUrl, string $redirectUri)`:
 
-- `$authorizeUrl` — the full provider authorize URL, built however you like (query string assembled by hand, a package like `league/oauth2-client`, etc.). It must itself already contain a `redirect_uri` parameter matching `$redirectUri` — that's what tells the *provider* where to send the browser back to; the second argument is what tells *this plugin* which incoming URL to treat as that callback and intercept.
+- `$authorizeUrl` — the full provider authorize URL, built however you like (query string assembled by hand, a package like `league/oauth2-client`, etc.). It must itself already contain a `redirect_uri` parameter matching `$redirectUri` — that's what tells the _provider_ where to send the browser back to; the second argument is what tells _this plugin_ which incoming URL to treat as that callback and intercept.
 - `$redirectUri` — **must use the `nativephp://` scheme**, e.g. `nativephp://127.0.0.1/auth/callback`. Host and path are yours to choose freely (useful if you run more than one OAuth flow), but the scheme itself is fixed on both platforms: Android can only route a callback back into the app through a scheme registered in the compiled AndroidManifest at build time (there's no way to register one dynamically per PHP call), so every app using this plugin shares the one `nativephp://` scheme rather than something derived per-app. Register exactly this redirect URI with your OAuth provider.
 
 #### Builder methods
 
-| Method | Description |
-|---|---|
+| Method                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ephemeral(bool $enabled = true)` | Use a private browsing session with no shared cookies/SSO state, so the provider always shows a fresh login instead of silently reusing a previous session. Defaults to `true`. On iOS this maps directly to `prefersEphemeralWebBrowserSession`; Android's `CookieManager` has no per-session scoping, so this clears the app's WebView cookie jar before presenting the Custom Tab instead — see the platform notes below. |
-| `id(string $id)` | Custom correlation ID for this session. |
-| `getId()` | Read the current correlation ID, or `null`. |
-| `auth()` | Send the request to the native bridge. Returns `bool`. |
+| `id(string $id)`                  | Custom correlation ID for this session.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `getId()`                         | Read the current correlation ID, or `null`.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `auth()`                          | Send the request to the native bridge. Returns `bool`.                                                                                                                                                                                                                                                                                                                                                                       |
 
 If you never call `->auth()` explicitly, it fires automatically when the builder object is destructed, same as `open()`.
 
@@ -263,7 +267,12 @@ class SupportBrowser extends Component
 This package doesn't publish a `#nativephp` import alias (that's reserved for NativePHP's first-party plugins). Import the file directly — either from the vendor path, or copy it into your own `resources/js/` and import it from there:
 
 ```js
-import { Browser, On, Off, Events } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import {
+  Browser,
+  On,
+  Off,
+  Events,
+} from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 ```
 
 Full TypeScript types (including the `BrowserMode` union) are included in `browser.d.ts` alongside it.
@@ -273,28 +282,28 @@ Full TypeScript types (including the `BrowserMode` union) are included in `brows
 `Browser.open(url)` returns a thenable builder — `await` it directly, or chain builder methods first:
 
 ```js
-import { Browser } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import { Browser } from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 
-await Browser.open('https://example.com');
+await Browser.open("https://example.com");
 
 // or fully configured
-await Browser.open('https://example.com')
-  .id('support-page')
-  .title('Support')
+await Browser.open("https://example.com")
+  .id("support-page")
+  .title("Support")
   .showNavigationButtons(true)
   .shareButton(true);
 
 // external browser
-await Browser.open('https://example.com').external();
+await Browser.open("https://example.com").external();
 ```
 
 ### Closing an in-app browser
 
 ```js
-import { Browser } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import { Browser } from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 
-await Browser.close();                // close whatever in-app browser is open
-await Browser.close('support-page');  // close a specific session by id
+await Browser.close(); // close whatever in-app browser is open
+await Browser.close("support-page"); // close a specific session by id
 ```
 
 ### OAuth sign-in
@@ -302,7 +311,12 @@ await Browser.close('support-page');  // close a specific session by id
 `Browser.auth(authorizeUrl, redirectUri)` runs the same native OAuth flow as the PHP `auth()` builder (see the PHP section above for the full explanation of why this exists instead of just using `open()`, and why `redirectUri` must use the `nativephp://` scheme):
 
 ```js
-import { Browser, On, Off, Events } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import {
+  Browser,
+  On,
+  Off,
+  Events,
+} from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 
 function handleAuthCompleted(payload) {
   // payload: { callbackUrl: string, params: Record<string, string>, id: string | null }
@@ -313,18 +327,23 @@ function handleAuthCompleted(payload) {
 On(Events.Browser.AuthCompleted, handleAuthCompleted);
 
 await Browser.auth(
-  'https://provider.com/oauth/authorize?response_type=code&client_id=123&redirect_uri=nativephp%3A%2F%2F127.0.0.1%2Fauth%2Fcallback&state=xyz',
-  'nativephp://127.0.0.1/auth/callback',
-).id('sign-in');
+  "https://provider.com/oauth/authorize?response_type=code&client_id=123&redirect_uri=nativephp%3A%2F%2F127.0.0.1%2Fauth%2Fcallback&state=xyz",
+  "nativephp://127.0.0.1/auth/callback",
+).id("sign-in");
 
 // cancel a sign-in in progress the same way as closing a browser session
-await Browser.close('sign-in');
+await Browser.close("sign-in");
 ```
 
 ### Listening for events
 
 ```js
-import { Browser, On, Off, Events } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import {
+  Browser,
+  On,
+  Off,
+  Events,
+} from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 
 function handleOpened(payload) {
   // payload: { url: string, mode: 'webview' | 'external', id: string | null }
@@ -345,8 +364,13 @@ Off(Events.Browser.Closed, handleClosed);
 ### React example
 
 ```jsx
-import { useState, useEffect, useCallback } from 'react';
-import { Browser, On, Off, Events } from '../../vendor/sghimire/mobile-browser/resources/js/browser.js';
+import { useState, useEffect, useCallback } from "react";
+import {
+  Browser,
+  On,
+  Off,
+  Events,
+} from "../../vendor/sghimire/mobile-browser/resources/js/browser.js";
 
 export function SupportLink() {
   const [isOpen, setIsOpen] = useState(false);
@@ -363,35 +387,39 @@ export function SupportLink() {
   }, []);
 
   const openSupport = useCallback(() => {
-    Browser.open('https://example.com/support').title('Support');
+    Browser.open("https://example.com/support").title("Support");
   }, []);
 
-  return <button onClick={openSupport}>{isOpen ? 'Support open…' : 'Get support'}</button>;
+  return (
+    <button onClick={openSupport}>
+      {isOpen ? "Support open…" : "Get support"}
+    </button>
+  );
 }
 ```
 
 ### JS API reference
 
-| Export | Signature | Description |
-|---|---|---|
-| `Browser.open(url)` | `(string) => PendingOpen` | Start building an open request. |
-| `.mode(mode)` | `(BrowserMode) => this` | `'webview'` or `'external'`. Throws if unknown. |
-| `.external(external?)` | `(boolean = true) => this` | Shortcut for `mode('external')` / `mode('webview')`. |
-| `.title(title)` | `(string) => this` | Subtitle shown under the page's own title in the header, `webview` mode only. |
-| `.showToolbar(enabled?)` | `(boolean = true) => this` | Show/hide the compact header (back button, title, overflow menu). |
-| `.showNavigationButtons(enabled?)` | `(boolean = true) => this` | Whether the header's back button can walk page history before closing the overlay. Hardware/gesture back is unaffected. |
-| `.shareButton(enabled?)` | `(boolean = true) => this` | Show/hide "Share…" in the header's overflow menu. |
-| `.desktopMode(enabled?)` | `(boolean = true) => this` | Request a desktop user agent. `webview` mode only. |
-| `.id(id)` | `(string) => this` | Custom correlation ID. |
-| `.getId()` | `() => string \| null` | Read the current correlation ID. |
-| `Browser.auth(url, redirectUri)` | `(string, string) => PendingAuth` | Start building an OAuth sign-in request. `redirectUri` must use the `nativephp://` scheme. |
-| `.ephemeral(enabled?)` | `(boolean = true) => this` | Use a private session with no shared cookies/SSO state. Defaults to `true`. |
-| `Browser.close(id?)` | `(string?) => Promise<{ closed: boolean }>` | Dismiss the open in-app browser, or cancel an in-progress `auth()` sign-in. |
-| `On(event, callback)` | `(string, (payload, eventName) => void) => void` | Subscribe to a native event. |
-| `Off(event, callback)` | `(string, (payload, eventName) => void) => void` | Unsubscribe. |
-| `Events.Browser.Opened` | `string` | Event name constant. |
-| `Events.Browser.Closed` | `string` | Event name constant. |
-| `Events.Browser.AuthCompleted` | `string` | Event name constant. |
+| Export                             | Signature                                        | Description                                                                                                             |
+| ---------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `Browser.open(url)`                | `(string) => PendingOpen`                        | Start building an open request.                                                                                         |
+| `.mode(mode)`                      | `(BrowserMode) => this`                          | `'webview'` or `'external'`. Throws if unknown.                                                                         |
+| `.external(external?)`             | `(boolean = true) => this`                       | Shortcut for `mode('external')` / `mode('webview')`.                                                                    |
+| `.title(title)`                    | `(string) => this`                               | Subtitle shown under the page's own title in the header, `webview` mode only.                                           |
+| `.showToolbar(enabled?)`           | `(boolean = true) => this`                       | Show/hide the compact header (back button, title, overflow menu).                                                       |
+| `.showNavigationButtons(enabled?)` | `(boolean = true) => this`                       | Whether the header's back button can walk page history before closing the overlay. Hardware/gesture back is unaffected. |
+| `.shareButton(enabled?)`           | `(boolean = true) => this`                       | Show/hide "Share…" in the header's overflow menu.                                                                       |
+| `.desktopMode(enabled?)`           | `(boolean = true) => this`                       | Request a desktop user agent. `webview` mode only.                                                                      |
+| `.id(id)`                          | `(string) => this`                               | Custom correlation ID.                                                                                                  |
+| `.getId()`                         | `() => string \| null`                           | Read the current correlation ID.                                                                                        |
+| `Browser.auth(url, redirectUri)`   | `(string, string) => PendingAuth`                | Start building an OAuth sign-in request. `redirectUri` must use the `nativephp://` scheme.                              |
+| `.ephemeral(enabled?)`             | `(boolean = true) => this`                       | Use a private session with no shared cookies/SSO state. Defaults to `true`.                                             |
+| `Browser.close(id?)`               | `(string?) => Promise<{ closed: boolean }>`      | Dismiss the open in-app browser, or cancel an in-progress `auth()` sign-in.                                             |
+| `On(event, callback)`              | `(string, (payload, eventName) => void) => void` | Subscribe to a native event.                                                                                            |
+| `Off(event, callback)`             | `(string, (payload, eventName) => void) => void` | Unsubscribe.                                                                                                            |
+| `Events.Browser.Opened`            | `string`                                         | Event name constant.                                                                                                    |
+| `Events.Browser.Closed`            | `string`                                         | Event name constant.                                                                                                    |
+| `Events.Browser.AuthCompleted`     | `string`                                         | Event name constant.                                                                                                    |
 
 `await`-ing (or `.then`-ing) a `PendingOpen`/`PendingAuth` sends the request to the native bridge exactly once — awaiting it twice is a no-op the second time.
 
@@ -403,43 +431,43 @@ export function SupportLink() {
 
 Dispatched once the page has loaded (`webview` mode) or the OS confirms the hand-off succeeded (`external` mode).
 
-| Property | Type | Description |
-|---|---|---|
-| `url` | `string` / `string` | The URL that was opened. |
-| `mode` | `string` / `'webview' \| 'external'` | Which mode served the request. |
-| `id` | `?string` / `string \| null` | The correlation ID from `.id()`, if one was set. |
+| Property | Type                                 | Description                                      |
+| -------- | ------------------------------------ | ------------------------------------------------ |
+| `url`    | `string` / `string`                  | The URL that was opened.                         |
+| `mode`   | `string` / `'webview' \| 'external'` | Which mode served the request.                   |
+| `id`     | `?string` / `string \| null`         | The correlation ID from `.id()`, if one was set. |
 
 ### `Closed`
 
 Dispatched when the in-app browser is dismissed, when an `external` hand-off fails, or when an `auth()` sign-in ends without completing.
 
-| Property | Type | Description |
-|---|---|---|
+| Property | Type                         | Description                                                                                                                                                                                                                                                                                   |
+| -------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reason` | `?string` / `string \| null` | Browsing: `"user_closed"`, `"closed_by_app"`, `"replaced"`, `"load_error"`, `"invalid_url"`, `"no_browser_available"`, `"launch_failed"`. Sign-in: `"user_cancelled"`, `"closed_by_app"`, `"replaced"`, `"auth_failed"`, `"no_browser_available"`, `"invalid_url"`. Never `null` in practice. |
-| `id` | `?string` / `string \| null` | The correlation ID from `.id()`, if one was set. |
+| `id`     | `?string` / `string \| null` | The correlation ID from `.id()`, if one was set.                                                                                                                                                                                                                                              |
 
 ### `AuthCompleted`
 
 Dispatched once the OAuth provider redirects back to `redirectUri` after `auth()`.
 
-| Property | Type | Description |
-|---|---|---|
-| `callbackUrl` | `string` / `string` | The full callback URL exactly as the provider sent it. |
-| `params` | `array` / `Record<string, string>` | Every query **and** URL-fragment parameter, already parsed and merged into one flat map — covers both authorization-code (`code`, `state`) and implicit-grant (`access_token`, `token_type`, ...) flows. |
-| `id` | `?string` / `string \| null` | The correlation ID from `.id()`, if one was set. |
+| Property      | Type                               | Description                                                                                                                                                                                              |
+| ------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `callbackUrl` | `string` / `string`                | The full callback URL exactly as the provider sent it.                                                                                                                                                   |
+| `params`      | `array` / `Record<string, string>` | Every query **and** URL-fragment parameter, already parsed and merged into one flat map — covers both authorization-code (`code`, `state`) and implicit-grant (`access_token`, `token_type`, ...) flows. |
+| `id`          | `?string` / `string \| null`       | The correlation ID from `.id()`, if one was set.                                                                                                                                                         |
 
 - PHP classes: `Sandip\Browser\Native\Events\Browser\Opened`, `Sandip\Browser\Native\Events\Browser\Closed`, `Sandip\Browser\Native\Events\Browser\AuthCompleted`
 - JS event name constants: `Events.Browser.Opened`, `Events.Browser.Closed`, `Events.Browser.AuthCompleted`
 
 ## Platform notes
 
-| | Android | iOS |
-|---|---|---|
-| Min OS version | API 23 | 15.0 |
-| Permission | `android.permission.INTERNET` | none |
-| Native implementation | `resources/android/BrowserFunctions.kt` (`android.webkit.WebView`) | `resources/ios/BrowserFunctions.swift` (`WKWebView`) |
-| External hand-off | `Intent.ACTION_VIEW` | `UIApplication.shared.open` |
-| OAuth sign-in | Chrome Custom Tabs (`androidx.browser:browser`) + a dedicated `BrowserAuthActivity` that owns the `nativephp://` intent-filter | `ASWebAuthenticationSession` |
+|                       | Android                                                                                                                        | iOS                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Min OS version        | API 23                                                                                                                         | 15.0                                                 |
+| Permission            | `android.permission.INTERNET`                                                                                                  | none                                                 |
+| Native implementation | `resources/android/BrowserFunctions.kt` (`android.webkit.WebView`)                                                             | `resources/ios/BrowserFunctions.swift` (`WKWebView`) |
+| External hand-off     | `Intent.ACTION_VIEW`                                                                                                           | `UIApplication.shared.open`                          |
+| OAuth sign-in         | Chrome Custom Tabs (`androidx.browser:browser`) + a dedicated `BrowserAuthActivity` that owns the `nativephp://` intent-filter | `ASWebAuthenticationSession`                         |
 
 Both are configured automatically by `nativephp.json` — you don't need to edit native project files by hand.
 
